@@ -76,7 +76,8 @@ if [ $RESULT -eq 0 ]
           trap shutdown SIGTERM SIGINT
           wait $PID
           kill -s SIGTERM $replay_pid
-         # wait $replay_pid
+          # wait $replay_pid
+          adb -s $DEVICE_SERIAL reverse --remove-all
         else
           echo "Replay server didn't start correctly" >&2
           exit 1
