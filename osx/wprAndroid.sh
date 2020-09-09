@@ -1,10 +1,10 @@
 #!/bin/bash
 set -eu
 
-DIR=$(dirname "$0")
-BROWSERTIME_RECORD=../bin/browsertimeWebPageReplay.js
-BROWSERTIME=../bin/sitespeed.js
+BROWSERTIME=../bin/browsertimeWebPageReplay.js
+SITESPEEDIO=../bin/sitespeed.js
 
+# Ports 
 HTTP_PORT=80
 HTTPS_PORT=443
 
@@ -14,8 +14,16 @@ SCRIPTS=../docker/webpagereplay/deterministic.js
 
 WPR_HTTP_PORT=8082
 WPR_HTTPS_PORT=8081
-DEVICE_SERIAL=${DEVICE_SERIAL:-ZY322MMFZ2}
+DEVICE_SERIAL=${DEVICE_SERIAL:-'default'}
 DELAY=${DELAY:-100}
+
+# You need to supply a DEVICE_SERIAL we can reverse the traffic
+
+if [ "$DEVICE_SERIAL" == "default" ]
+then
+      echo "You need to add \$DEVICE_SERIAL so traffic can be reveresed"
+      exit 1
+fi
 
 WPR_ARCHIVE=./archive.wprgo
 WPR_RECORD_LOG=./wpr-record.log
@@ -42,7 +50,7 @@ echo 'Start WebPageReplay Record'
 ./wpr record $WPR_PARAMS > $WPR_RECORD_LOG 2>&1 &
 record_pid=$!
 sleep $RECORD_WAIT
-node $BROWSERTIME_RECORD --browsertime.firefox.preference network.dns.forceResolve:127.0.0.1 --browsertime.chrome.args host-resolver-rules="MAP *:$HTTP_PORT 127.0.0.1:$WPR_HTTP_PORT,MAP *:$HTTPS_PORT 127.0.0.1:$WPR_HTTPS_PORT,EXCLUDE localhost" --android true "$@"
+node $BROWSERTIME --browsertime.firefox.preference network.dns.forceResolve:127.0.0.1 --browsertime.chrome.args host-resolver-rules="MAP *:$HTTP_PORT 127.0.0.1:$WPR_HTTP_PORT,MAP *:$HTTPS_PORT 127.0.0.1:$WPR_HTTPS_PORT,EXCLUDE localhost" --android true "$@"
 RESULT+=$?
 
 kill -2 $record_pid
@@ -58,13 +66,17 @@ if [ $RESULT -eq 0 ]
       sleep $REPLAY_WAIT
       if [ $? -eq 0 ]
         then
-          node $BROWSERTIME --firefox.preference network.dns.forceResolve:127.0.0.1 --firefox.preference security.OCSP.enabled:0 --chrome.args host-resolver-rules="MAP *:$HTTP_PORT 127.0.0.1:$WPR_HTTP_PORT,MAP *:$HTTPS_PORT 127.0.0.1:$WPR_HTTPS_PORT,EXCLUDE localhost" --connectivity.engine throttle --android --browsertime.chrome.args "ignore-certificate-errors-spki-list=PhrPvGIaAMmd29hj8BCZOq096yj7uMpRNHpn5PDxI6I=" --browsertime.chrome.args "user-data-dir=/tmp/chrome" "$@" &
+          echo 'Pre warm the Replay server'
+          node $BROWSERTIME --browsertime.firefox.preference network.dns.forceResolve:127.0.0.1 --browsertime.chrome.args host-resolver-rules="MAP *:$HTTP_PORT 127.0.0.1:$WPR_HTTP_PORT,MAP *:$HTTPS_PORT 127.0.0.1:$WPR_HTTPS_PORT,EXCLUDE localhost" --android true --browsertime.chrome.args "ignore-certificate-errors-spki-list=PhrPvGIaAMmd29hj8BCZOq096yj7uMpRNHpn5PDxI6I=" --browsertime.chrome.args "user-data-dir=/tmp/chrome" "$@"
+
+          echo 'Run the test'
+          node $SITESPEEDIO --firefox.preference network.dns.forceResolve:127.0.0.1 --firefox.preference security.OCSP.enabled:0 --chrome.args host-resolver-rules="MAP *:$HTTP_PORT 127.0.0.1:$WPR_HTTP_PORT,MAP *:$HTTPS_PORT 127.0.0.1:$WPR_HTTPS_PORT,EXCLUDE localhost" --connectivity.engine throttle --android --browsertime.chrome.args "ignore-certificate-errors-spki-list=PhrPvGIaAMmd29hj8BCZOq096yj7uMpRNHpn5PDxI6I=" --browsertime.chrome.args "user-data-dir=/tmp/chrome" "$@" &
           PID=$!
 
           trap shutdown SIGTERM SIGINT
-          wait $PID 
+          wait $PID
           kill -s SIGTERM $replay_pid
-          wait $replay_pid
+         # wait $replay_pid
         else
           echo "Replay server didn't start correctly" >&2
           exit 1
