@@ -1,0 +1,18 @@
+{
+  "android": true,
+  "browsertime": {
+    "chrome": {
+      "args": [
+        "MAP *:80 127.0.0.1:$8087,MAP *:443 127.0.0.1:8088,EXCLUDE localhost",
+        "ignore-certificate-errors-spki-list=PhrPvGIaAMmd29hj8BCZOq096yj7uMpRNHpn5PDxI6I=",
+        "user-data-dir=/data/local/tmp/chrome"
+      ]
+    },
+    "firefox": {
+      "preference": [
+        "network.dns.forceResolve:127.0.0.1",
+        "security.OCSP.enabled:0"
+      ]
+    }
+  }
+}

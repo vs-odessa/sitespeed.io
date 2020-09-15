@@ -1,56 +1,51 @@
 #!/bin/bash
-set -eu
+set -u
 
-BROWSERTIME=../bin/browsertimeWebPageReplay.js
-SITESPEEDIO=../bin/sitespeed.js
+# You need to supply a DEVICE_SERIAL we can reverse the traffic for tht phone
+DEVICE_SERIAL=${DEVICE_SERIAL:-'default'}
+if [ "$DEVICE_SERIAL" == "default" ]
+  then
+    echo "You need to add \$DEVICE_SERIAL so traffic can be reversed"
+    exit 1
+fi
 
-# Ports 
+BROWSERTIME=sitespeed.io-wpr
+SITESPEEDIO=sitespeed.io
+
+# Ports used for mapping the browser to WPR
 HTTP_PORT=80
 HTTPS_PORT=443
 
-CERT_FILE=../docker/webpagereplay/wpr_cert.pem
-KEY_FILE=../docker/webpagereplay/wpr_key.pem
-SCRIPTS=../docker/webpagereplay/deterministic.js
+# WebPageReplay setup 
+WPR_CERT_FILE=./wpr/wpr_cert.pem
+WPR_KEY_FILE=./wpr//wpr_key.pem
+WPR_SCRIPTS=./wpr/deterministic.js
+WPR_HTTP_PORT=8087
+WPR_HTTPS_PORT=8088
+WPR_ARCHIVE=./logs/archive.wprgo
+WPR_RECORD_LOG=./logs/wpr-record.log
+WPR_REPLAY_LOG=./logs/wpr-replay.log
 
-WPR_HTTP_PORT=8082
-WPR_HTTPS_PORT=8081
-DEVICE_SERIAL=${DEVICE_SERIAL:-'default'}
-DELAY=${DELAY:-100}
-
-# You need to supply a DEVICE_SERIAL we can reverse the traffic
-
-if [ "$DEVICE_SERIAL" == "default" ]
-then
-      echo "You need to add \$DEVICE_SERIAL so traffic can be reveresed"
-      exit 1
-fi
-
-WPR_ARCHIVE=./archive.wprgo
-WPR_RECORD_LOG=./wpr-record.log
-WPR_REPLAY_LOG=./wpr-replay.log
+# Parameters used to start WebPageReplay
+WPR_PARAMS="--http_port $WPR_HTTP_PORT --https_port $WPR_HTTPS_PORT --https_cert_file $WPR_CERT_FILE --https_key_file $WPR_KEY_FILE --inject_scripts $WPR_SCRIPTS $WPR_ARCHIVE"
 
 # Reverse the traffic for the android device back to the computer
 adb -s $DEVICE_SERIAL reverse tcp:$WPR_HTTP_PORT tcp:$WPR_HTTP_PORT
 adb -s $DEVICE_SERIAL reverse tcp:$WPR_HTTPS_PORT tcp:$WPR_HTTPS_PORT
 
 function shutdown {
-    kill -2 $replay_pid
-    wait $replay_pid
-    kill -s SIGTERM ${PID}
-    wait $PID
+  kill -2 $replay_pid
+  wait $replay_pid
+  kill -s SIGTERM ${PID}
+  wait $PID
 }
-
-WPR_PARAMS="--http_port $WPR_HTTP_PORT --https_port $WPR_HTTPS_PORT --https_cert_file $CERT_FILE --https_key_file $KEY_FILE --inject_scripts $SCRIPTS $WPR_ARCHIVE"
-WAIT=${WAIT:-5000}
-REPLAY_WAIT=${REPLAY_WAIT:-3}
-RECORD_WAIT=${RECORD_WAIT:-3}
 
 declare -i RESULT=0
 echo 'Start WebPageReplay Record'
-./wpr record $WPR_PARAMS > $WPR_RECORD_LOG 2>&1 &
+./wpr/wpr record $WPR_PARAMS > $WPR_RECORD_LOG 2>&1 &
 record_pid=$!
-sleep $RECORD_WAIT
-node $BROWSERTIME --browsertime.firefox.preference network.dns.forceResolve:127.0.0.1 --browsertime.chrome.args host-resolver-rules="MAP *:$HTTP_PORT 127.0.0.1:$WPR_HTTP_PORT,MAP *:$HTTPS_PORT 127.0.0.1:$WPR_HTTPS_PORT,EXCLUDE localhost" --android true "$@"
+sleep 3
+$BROWSERTIME "$@"
 RESULT+=$?
 
 kill -2 $record_pid
@@ -59,30 +54,29 @@ wait $record_pid
 echo 'Stopped WebPageReplay record'
 
 if [ $RESULT -eq 0 ]
-    then
-      echo 'Start WebPageReplay Replay'
-      ./wpr replay $WPR_PARAMS > $WPR_REPLAY_LOG 2>&1 &
-      replay_pid=$!
-      sleep $REPLAY_WAIT
-      if [ $? -eq 0 ]
-        then
-          echo 'Pre warm the Replay server'
-          node $BROWSERTIME --browsertime.firefox.preference network.dns.forceResolve:127.0.0.1 --browsertime.chrome.args host-resolver-rules="MAP *:$HTTP_PORT 127.0.0.1:$WPR_HTTP_PORT,MAP *:$HTTPS_PORT 127.0.0.1:$WPR_HTTPS_PORT,EXCLUDE localhost" --android true --browsertime.chrome.args "ignore-certificate-errors-spki-list=PhrPvGIaAMmd29hj8BCZOq096yj7uMpRNHpn5PDxI6I=" --browsertime.chrome.args "user-data-dir=/tmp/chrome" "$@"
-
-          echo 'Run the test'
-          node $SITESPEEDIO --firefox.preference network.dns.forceResolve:127.0.0.1 --firefox.preference security.OCSP.enabled:0 --chrome.args host-resolver-rules="MAP *:$HTTP_PORT 127.0.0.1:$WPR_HTTP_PORT,MAP *:$HTTPS_PORT 127.0.0.1:$WPR_HTTPS_PORT,EXCLUDE localhost" --connectivity.engine throttle --android --browsertime.chrome.args "ignore-certificate-errors-spki-list=PhrPvGIaAMmd29hj8BCZOq096yj7uMpRNHpn5PDxI6I=" --browsertime.chrome.args "user-data-dir=/tmp/chrome" "$@" &
-          PID=$!
-
-          trap shutdown SIGTERM SIGINT
-          wait $PID
-          kill -s SIGTERM $replay_pid
-          # wait $replay_pid
-          adb -s $DEVICE_SERIAL reverse --remove-all
-        else
-          echo "Replay server didn't start correctly" >&2
-          exit 1
-      fi
+  then
+    echo 'Start WebPageReplay Replay'
+    ./wpr/wpr replay $WPR_PARAMS > $WPR_REPLAY_LOG 2>&1 &
+    replay_pid=$!
+    if [ $? -eq 0 ]
+      then
+        echo 'Pre warm the Replay server'
+        sleep 10
+        $BROWSERTIME "$@"
+        sleep 10
+        echo 'Run the test'
+        $SITESPEEDIO "$@" &
+        PID=$!
+        trap shutdown SIGTERM SIGINT
+        wait $PID
+        kill -s SIGTERM $replay_pid
+        # wait $replay_pid
+        adb -s $DEVICE_SERIAL reverse --remove-all
+    else
+      echo "Replay server didn't start correctly" >&2
+      exit 1
+    fi
 else
   echo "Recording or accessing the URL failed, will not replay" >&2
-    exit 1
+  exit 1
 fi
